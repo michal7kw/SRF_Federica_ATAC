@@ -1,0 +1,11 @@
+.snakemake/
+logs/
+tmp/
+
+*.bai
+*.bam
+*.fa
+*.gz
+
+
+*[]._larger_than_50MB

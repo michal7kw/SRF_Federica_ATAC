@@ -1,0 +1,21 @@
+__default__:
+    partition: workq
+    time: "8:00:00"
+    nodes: 1
+    mem: "8G"
+    threads: 2
+
+bowtie2:
+    time: "24:00:00"
+    mem: "32G"
+    threads: 16
+
+mark_duplicates:
+    time: "12:00:00"
+    mem: "32G"
+    threads: 4
+
+diffbind:
+    time: "12:00:00"
+    mem: "64G"
+    threads: 8

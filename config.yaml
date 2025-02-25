@@ -1,0 +1,86 @@
+samples:
+  WT1-ATAC:
+    condition: "WT"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/WT1-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/WT1-ATAC_R2_001.fastq.gz"
+  WT2-ATAC:
+    condition: "WT"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/WT2-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/WT2-ATAC_R2_001.fastq.gz"
+  WT3-ATAC:
+    condition: "WT"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/WT3-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/WT3-ATAC_R2_001.fastq.gz"
+  KI2-ATAC:
+    condition: "KI"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KI2-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KI2-ATAC_R2_001.fastq.gz"
+  KI3-ATAC:
+    condition: "KI"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KI3-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KI3-ATAC_R2_001.fastq.gz"
+  KI4-ATAC:
+    condition: "KI"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KI4-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KI4-ATAC_R2_001.fastq.gz"
+  KO1-ATAC:
+    condition: "KO"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KO1-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KO1-ATAC_R2_001.fastq.gz"
+  KO2-ATAC:
+    condition: "KO"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KO2-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KO2-ATAC_R2_001.fastq.gz"
+  KO3-ATAC:
+    condition: "KO"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KO3-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/KO3-ATAC_R2_001.fastq.gz"
+  PAZ1-ATAC:
+    condition: "PAZ"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/PAZ1-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/PAZ1-ATAC_R2_001.fastq.gz"
+  PAZ2-ATAC:
+    condition: "PAZ"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/PAZ2-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/PAZ2-ATAC_R2_001.fastq.gz"
+  PAZ3-ATAC:
+    condition: "PAZ"
+    r1: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/PAZ3-ATAC_R1_001.fastq.gz"
+    r2: "/beegfs/scratch/ric.broccoli/kubacki.michal/Azenta_projects/90-1128368463/00_fastq/PAZ3-ATAC_R2_001.fastq.gz"
+
+# Reference genome parameters
+genome:
+  name: "hg38"
+  fasta: "data/hg38.fa"
+  bowtie2_index: "/beegfs/scratch/ric.broccoli/kubacki.michal/SRF_H2AK119Ub_cross_V5/SRF_H2AK119Ub/genome/GRCh38"
+  blacklist: "data/hg38-blacklist.v2.bed"
+
+# Tool parameters
+params:
+  trimmomatic:
+    adapters: "TruSeq3-PE.fa"
+    leading: 3
+    trailing: 3
+    slidingwindow: "4:15"
+    minlen: 36
+  
+  macs2:
+    format: "BAMPE"
+    gsize: "hs"
+    qvalue: 0.05
+    
+  diffbind:
+    fdr: 0.05
+    lfc: 1
+
+# Comparisons for differential analysis
+comparisons:
+  - name: "KI_vs_WT"
+    treatment: "KI"
+    control: "WT"
+  - name: "KO_vs_WT"
+    treatment: "KO"
+    control: "WT"
+  - name: "PAZ_vs_WT"
+    treatment: "PAZ"
+    control: "WT" 
