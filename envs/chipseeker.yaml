@@ -1,0 +1,15 @@
+name: chipseeker_env
+channels:
+  - bioconda
+  - conda-forge
+  - defaults
+dependencies:
+  - r-base=4.1
+  - bioconductor-chipseeker=1.30.0
+  - bioconductor-txdb.hsapiens.ucsc.hg38.knowngene=3.14.0
+  - bioconductor-txdb.hsapiens.ucsc.hg19.knowngene=3.2.2
+  - bioconductor-txdb.mmusculus.ucsc.mm10.knowngene=3.10.0
+  - bioconductor-org.hs.eg.db=3.14.0
+  - bioconductor-org.mm.eg.db=3.14.0
+  - r-ggplot2=3.3.5
+  - r-dplyr=1.0.7 

@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=ATAC_analysis
+#SBATCH --job-name=F_ATAC_analysis
 #SBATCH --output=logs/snakemake.out
 #SBATCH --error=logs/snakemake.err
 #SBATCH --nodes=1
@@ -14,10 +14,15 @@
 WORKING_DIR="/beegfs/scratch/ric.broccoli/kubacki.michal/SRF_Federica_ATAC"
 cd $WORKING_DIR || exit 1
 
-# Create necessary directories
+# Create all necessary directories
 mkdir -p logs/cluster_logs
-mkdir -p results/{qc/{fastqc,picard},trimmed,bam,peaks,diffbind}
+mkdir -p logs/filter_bam
+mkdir -p logs/create_bigwig
+mkdir -p logs/tss_enrichment
+mkdir -p logs/annotate_peaks
+mkdir -p results/{qc/{fastqc,picard,fragment_sizes,tss_enrichment,multiqc},trimmed,bam,peaks,diffbind,tracks,annotation,visualization}
 mkdir -p tmp
+mkdir -p envs
 
 # Debug information
 echo "Current PATH: $PATH"
@@ -54,9 +59,77 @@ conda activate snakemake
 echo "Active conda environment: $CONDA_DEFAULT_ENV"
 echo "Python location: $(which python)"
 
+# Unlock the working directory if needed
 snakemake --unlock
 
-# Run snakemake
+# Verify required input files exist
+echo "Checking for required input files..."
+for SAMPLE in $(grep -v '^#' config.yaml | grep -o '"[^"]*": {' | sed 's/": {//' | sed 's/"//g'); do
+    BAM_FILE="results/bam/${SAMPLE}.markdup.bam"
+    if [ ! -f "$BAM_FILE" ]; then
+        echo "Warning: $BAM_FILE does not exist. Pipeline may fail."
+    fi
+done
+
+if [ ! -f "$(grep 'blacklist' config.yaml | awk '{print $2}' | tr -d '"')" ]; then
+    echo "Warning: Blacklist file not found. Pipeline may fail."
+fi
+
+if [ ! -f "$(grep 'tss_bed' config.yaml | awk '{print $2}' | tr -d '"')" ]; then
+    echo "Warning: TSS bed file not found. Pipeline may fail."
+fi
+
+# Create conda environments if they don't exist
+echo "===== Creating conda environments ====="
+snakemake --use-conda --conda-create-envs-only --conda-frontend conda \
+    --conda-prefix ${WORKING_DIR}/.snakemake/conda
+
+# Run snakemake in multiple phases to ensure proper order
+echo "===== PHASE 1: Filtering BAM files ====="
+snakemake \
+    --snakefile Snakefile \
+    --executor slurm \
+    --jobs 12 \
+    --default-resources \
+        slurm_partition=workq \
+        mem_mb=8000 \
+        runtime=240 \
+        threads=2 \
+        nodes=1 \
+    --resources mem_mb=64000 \
+    --set-threads bowtie2=16 mark_duplicates=4 filter_bam=8 \
+    --set-resources bowtie2:runtime=1440 mark_duplicates:runtime=720 filter_bam:runtime=240 \
+    --use-conda \
+    --conda-frontend conda \
+    --conda-prefix ${WORKING_DIR}/.snakemake/conda \
+    --latency-wait 60 \
+    --rerun-incomplete \
+    --keep-going \
+    --until filter_bam
+
+echo "===== PHASE 2: Creating bigWig files ====="
+snakemake \
+    --snakefile Snakefile \
+    --executor slurm \
+    --jobs 12 \
+    --default-resources \
+        slurm_partition=workq \
+        mem_mb=8000 \
+        runtime=240 \
+        threads=2 \
+        nodes=1 \
+    --resources mem_mb=64000 \
+    --set-threads create_bigwig=8 \
+    --set-resources create_bigwig:runtime=240 \
+    --use-conda \
+    --conda-frontend conda \
+    --conda-prefix ${WORKING_DIR}/.snakemake/conda \
+    --latency-wait 60 \
+    --rerun-incomplete \
+    --keep-going \
+    --until create_bigwig
+
+echo "===== PHASE 3: Running analyses that depend on bigWig files ====="
 snakemake \
     --snakefile Snakefile \
     --executor slurm \
@@ -68,12 +141,13 @@ snakemake \
         threads=2 \
         nodes=1 \
     --resources mem_mb=64000 \
-    --set-threads bowtie2=16 mark_duplicates=4 diffbind=8 \
-    --set-resources bowtie2:runtime=1440 mark_duplicates:runtime=720 diffbind:runtime=720 \
+    --set-threads diffbind=8 \
+    --set-resources diffbind:runtime=720 \
     --use-conda \
     --conda-frontend conda \
     --conda-prefix ${WORKING_DIR}/.snakemake/conda \
     --latency-wait 60 \
     --rerun-incomplete \
-    --keep-going \
-    --forceall
+    --keep-going
+
+echo "===== Pipeline execution complete ====="

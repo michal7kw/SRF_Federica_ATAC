@@ -55,6 +55,10 @@ genome:
   bowtie2_index: "/beegfs/scratch/ric.broccoli/kubacki.michal/SRF_Federica_ATAC/bowtie2_index/hg38"
   blacklist: "data/hg38-blacklist.v2.bed"
   chrom_sizes: "data/hg38.chrom.sizes"
+  mito_chrom: "chrM"
+  tss_bed: "resources/gencode_tss.bed"
+  txdb: "hg38"
+  name: "Homo sapiens"
 
 # Tool parameters
 params:

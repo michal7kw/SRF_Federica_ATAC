@@ -5,6 +5,7 @@ hg38_reference/
 image/
 bowtie2_index/
 bowtie2_index_prebuild/
+Archive/
 
 
 *.bai
@@ -16,3 +17,4 @@ bowtie2_index_prebuild/
 *[]._larger_than_50MB
 results/tracks/
 *.bed
+data/gencode.v47.basic.annotation.gtf

@@ -28,6 +28,18 @@ def get_final_output():
     # Add bigWig tracks to final output
     final_output.extend(expand("results/tracks/{sample}.bw", 
                              sample=config["samples"]))
+    # Add fragment size QC
+    final_output.extend(expand("results/qc/fragment_sizes/{sample}.fragsize.pdf", 
+                             sample=config["samples"]))
+    # Add TSS enrichment QC
+    final_output.extend(expand("results/qc/tss_enrichment/{sample}.tss_enrichment.pdf", 
+                             sample=config["samples"]))
+    # Add peak annotation output
+    final_output.extend(expand("results/annotation/{sample}_annotated_peaks.tsv", 
+                             sample=config["samples"]))
+    # Add peak visualization output
+    final_output.extend(expand("results/visualization/{sample}_peak_heatmap.pdf", 
+                             sample=config["samples"]))
     return final_output
 
 # Rules
@@ -320,7 +332,16 @@ rule filter_bam:
         bam = "results/bam/{sample}.markdup.bam",
         blacklist = config["genome"]["blacklist"]
     output:
-        "results/bam/{sample}.filtered.bam"
+        bam = "results/bam/{sample}.filtered.bam",
+        bai = "results/bam/{sample}.filtered.bam.bai"
+    params:
+        # Mitochondrial contig name may vary by genome assembly
+        mito_chrom = config["genome"]["mito_chrom"],  # Usually "chrM" or "MT"
+        # Use sample-specific temporary files
+        tmp_filtered = "tmp/{sample}.filtered.tmp.bam",
+        tmp_nomito = "tmp/{sample}.nomito.tmp.bam"
+    log:
+        "logs/filter_bam/{sample}.log"
     resources:
         mem_mb=16000,
         runtime=240
@@ -329,16 +350,33 @@ rule filter_bam:
         "snakemake"
     shell:
         """
-        # For ATAC-seq: 
-        # -F 1804: remove unmapped, mate unmapped, secondary alignments, duplicates
-        # -f 2: keep properly paired reads
-        # -q 30: high quality alignments
-        samtools view -@ {threads} -b -F 1804 -f 2 -q 30 {input.bam} | \
-        # Remove reads in blacklisted regions
-        bedtools intersect -v -a stdin -b {input.blacklist} > {output}
+        # Create necessary directories
+        mkdir -p tmp
+        mkdir -p logs/filter_bam
         
-        # Index the filtered BAM
-        samtools index -@ {threads} {output}
+        # Step 1: Filter BAM for quality metrics
+        echo "Filtering for quality metrics..." > {log}
+        samtools view -@ {threads} -b -F 1804 -f 2 -q 30 \
+            -o {params.tmp_filtered} {input.bam} 2>> {log}
+        
+        # Step 2: Remove mitochondrial reads (fixed approach)
+        echo "Removing mitochondrial reads..." >> {log}
+        samtools view -h {params.tmp_filtered} 2>> {log} | \
+        grep -v "^@" | grep -v "{params.mito_chrom}\t" | \
+        cat <(samtools view -H {params.tmp_filtered} 2>> {log}) - | \
+        samtools view -@ {threads} -b -o {params.tmp_nomito} 2>> {log}
+        
+        # Step 3: Remove blacklisted regions
+        echo "Removing blacklisted regions..." >> {log}
+        bedtools intersect -v -a {params.tmp_nomito} -b {input.blacklist} > {output.bam} 2>> {log}
+        
+        # Step 4: Index the filtered BAM
+        echo "Indexing filtered BAM..." >> {log}
+        samtools index -@ {threads} {output.bam} 2>> {log}
+        
+        # Clean up temporary files
+        echo "Cleaning up..." >> {log}
+        rm -f {params.tmp_filtered} {params.tmp_nomito}
         """
 
 # Call peaks with MACS2 - Memory intensive
@@ -438,7 +476,10 @@ rule multiqc:
                       sample=config["samples"], read=["r1", "r2"]),
         markdup = expand("results/qc/picard/{sample}.markdup_metrics.txt", 
                        sample=config["samples"]),
-        # Add other QC files here as needed
+        fragment_sizes = expand("results/qc/fragment_sizes/{sample}.fragsize.txt", 
+                              sample=config["samples"]),
+        tss_enrichment = expand("results/qc/tss_enrichment/{sample}.tss_matrix.gz", 
+                              sample=config["samples"])
     output:
         report = "results/qc/multiqc/multiqc_report.html"
     params:
@@ -458,6 +499,8 @@ rule multiqc:
         multiqc \
             results/qc/fastqc \
             results/qc/picard \
+            results/qc/fragment_sizes \
+            results/qc/tss_enrichment \
             -o {params.outdir} \
             -f \
             -v
@@ -473,6 +516,8 @@ rule create_bigwig:
     params:
         genome_size = config["genome"]["chrom_sizes"],
         normalize = "RPKM"  # Options: CPM, RPKM, BPM, RPGC, None
+    log:
+        "logs/create_bigwig/{sample}.log"
     resources:
         mem_mb=16000,
         runtime=240
@@ -483,9 +528,14 @@ rule create_bigwig:
         """
         # Create output directory
         mkdir -p results/tracks
+        mkdir -p logs/create_bigwig
+        
+        # Verify input BAM file
+        echo "Checking input BAM file..." > {log}
+        samtools quickcheck {input.bam} || {{ echo "ERROR: BAM file {input.bam} failed validation" >> {log}; exit 1; }}
         
         # Generate normalized bigWig file with ATAC-seq specific parameters
-        # --centerReads centers the signal on the cutting sites
+        echo "Running bamCoverage..." >> {log}
         bamCoverage -b {input.bam} -o {output.bigwig} \
             --binSize 10 \
             --normalizeUsing {params.normalize} \
@@ -493,5 +543,188 @@ rule create_bigwig:
             --numberOfProcessors {threads} \
             --ignoreDuplicates \
             --minMappingQuality 30 \
-            --centerReads
+            --centerReads \
+            2>> {log}
+            
+        # Verify output bigWig file
+        echo "Checking output bigWig file..." >> {log}
+        if [ ! -s {output.bigwig} ]; then
+            echo "ERROR: BigWig file {output.bigwig} was not created or is empty" >> {log}
+            exit 1
+        fi
+        
+        echo "BigWig file generated successfully" >> {log}
+        """
+
+# Fragment size analysis - important QC metric for ATAC-seq
+rule fragment_size_analysis:
+    input:
+        bam = "results/bam/{sample}.filtered.bam"
+    output:
+        txt = "results/qc/fragment_sizes/{sample}.fragsize.txt",
+        pdf = "results/qc/fragment_sizes/{sample}.fragsize.pdf"
+    resources:
+        mem_mb=8000,
+        runtime=120
+    threads: 4
+    conda:
+        "snakemake"
+    shell:
+        """
+        # Create output directory
+        mkdir -p results/qc/fragment_sizes
+        
+        # Extract fragment lengths and generate histogram
+        samtools view -f 2 {input.bam} | \
+        awk '{{if ($9>0) print $9}}' | \
+        sort -n | uniq -c > {output.txt}
+        
+        # Plot fragment size distribution using R
+        Rscript -e '
+        data <- read.table("{output.txt}", header=FALSE)
+        colnames(data) <- c("Count", "Size")
+        pdf("{output.pdf}", width=8, height=6)
+        plot(data$Size, data$Count, type="l", col="blue", 
+             main="Fragment Size Distribution for {wildcards.sample}",
+             xlab="Fragment Size (bp)", ylab="Count")
+        abline(v=c(50, 100, 150, 200, 250), lty=2, col="gray")
+        dev.off()
+        '
+        """
+
+# TSS enrichment analysis - key QC metric for ATAC-seq
+rule tss_enrichment:
+    input:
+        bam = "results/bam/{sample}.filtered.bam",
+        bai = "results/bam/{sample}.filtered.bam.bai",
+        bigwig = "results/tracks/{sample}.bw"  # Add explicit dependency on bigwig
+    output:
+        matrix = "results/qc/tss_enrichment/{sample}.tss_matrix.gz",
+        plot = "results/qc/tss_enrichment/{sample}.tss_enrichment.pdf"
+    params:
+        tss_bed = config["genome"]["tss_bed"],
+        before = 2000,  # bp upstream of TSS
+        after = 2000    # bp downstream of TSS
+    log:
+        "logs/tss_enrichment/{sample}.log"
+    resources:
+        mem_mb=16000,
+        runtime=240
+    threads: 8
+    conda:
+        "deeptools_env"
+    shell:
+        """
+        # Create output directory
+        mkdir -p results/qc/tss_enrichment
+        mkdir -p logs/tss_enrichment
+        
+        # Check if bigWig file exists and is not empty
+        if [ ! -s {input.bigwig} ]; then
+            echo "ERROR: BigWig file {input.bigwig} does not exist or is empty" > {log}
+            exit 1
+        fi
+        
+        # Calculate signal matrix around TSS
+        echo "Running computeMatrix..." >> {log}
+        computeMatrix reference-point \
+            --referencePoint TSS \
+            -b {params.before} -a {params.after} \
+            -R {params.tss_bed} \
+            -S {input.bigwig} \
+            --skipZeros \
+            --numberOfProcessors {threads} \
+            -o {output.matrix} \
+            2>> {log}
+            
+        # Plot the TSS enrichment profile
+        echo "Running plotProfile..." >> {log}
+        plotProfile \
+            -m {output.matrix} \
+            --perGroup \
+            --refPointLabel "TSS" \
+            -out {output.plot} \
+            --plotTitle "TSS Enrichment - {wildcards.sample}" \
+            --yAxisLabel "Signal" \
+            --regionsLabel "TSS" \
+            2>> {log}
+        
+        echo "TSS enrichment analysis completed successfully" >> {log}
+        """
+
+# Peak annotation with ChIPseeker
+rule annotate_peaks:
+    input:
+        peaks = "results/peaks/{sample}_peaks.narrowPeak"
+    output:
+        annotated = "results/annotation/{sample}_annotated_peaks.tsv",
+        plot = "results/annotation/{sample}_annotation_plot.pdf"
+    params:
+        txdb = config["genome"]["txdb"],
+        genome = config["genome"]["name"]
+    log:
+        "logs/annotate_peaks/{sample}.log"
+    resources:
+        mem_mb=16000,
+        runtime=120
+    threads: 2
+    conda:
+        "envs/chipseeker.yaml"  # Create this environment file
+    script:
+        "scripts/annotate_peaks.R"
+
+# Generate peak heatmap
+rule peak_heatmap:
+    input:
+        bw = "results/tracks/{sample}.bw",
+        peaks = "results/peaks/{sample}_peaks.narrowPeak"
+    output:
+        matrix = "results/visualization/{sample}_peak_matrix.gz",
+        heatmap = "results/visualization/{sample}_peak_heatmap.pdf",
+        profile = "results/visualization/{sample}_peak_profile.pdf"
+    params:
+        window_size = 1000  # Changed from 'extend' to 'window_size'
+    resources:
+        mem_mb=16000,
+        runtime=240
+    threads: 8
+    conda:
+        "deeptools_env"
+    shell:
+        """
+        # Create output directory
+        mkdir -p results/visualization
+        
+        # Convert narrowPeak to BED format for deepTools
+        awk '{{print $1"\\t"$2"\\t"$3"\\t"$4}}' {input.peaks} > tmp_{wildcards.sample}.bed
+        
+        # Compute matrix around peak centers
+        computeMatrix reference-point \
+            --referencePoint center \
+            -b {params.window_size} -a {params.window_size} \
+            -R tmp_{wildcards.sample}.bed \
+            -S {input.bw} \
+            --skipZeros \
+            --numberOfProcessors {threads} \
+            -o {output.matrix}
+            
+        # Generate heatmap
+        plotHeatmap \
+            -m {output.matrix} \
+            -out {output.heatmap} \
+            --colorMap YlOrRd \
+            --whatToShow 'heatmap and colorbar' \
+            --heatmapHeight 15 \
+            --heatmapWidth 4 \
+            --plotTitle "{wildcards.sample} Peak Enrichment"
+            
+        # Generate profile plot
+        plotProfile \
+            -m {output.matrix} \
+            -out {output.profile} \
+            --plotTitle "{wildcards.sample} Average Peak Profile" \
+            --perGroup
+            
+        # Clean up
+        rm -f tmp_{wildcards.sample}.bed
         """ 

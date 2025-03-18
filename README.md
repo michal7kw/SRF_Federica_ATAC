@@ -4,20 +4,16 @@
 
 This Snakemake pipeline processes ATAC-seq data and performs differential analysis between experimental conditions.
 
-## Prerequisites
+## Steps
 
-The pipeline requires the following software to be installed in the conda environment named "snakemake":
+1. build *hg38* bowtie2_index -> `/data/hg38.fa` -> `crate_reference.sh` -> `/bowtie2_index`
+   - or use brebuild -> `/bowtie2_index_prbuild`
 
-- Snakemake (≥6.0)
-- FastQC
-- Trimmomatic
-- Bowtie2
-- Samtools
-- Picard
-- MACS2
-- R with the following packages:
-  - DiffBind
-  - tidyverse
+2. get TSS data -> `/resources` -> `get_tss_from_genecode.sh` -> `gencode_tss.bed`
+
+3. `run.sh` -> run Snakefile
+
+4. `/post_analysis`
 
 ## Directory Structure
 
@@ -91,7 +87,4 @@ snakemake --use-conda -j <number_of_cores>
 
 ## Notes
 
-- The pipeline is configured to run in the "snakemake" conda environment
-- Intermediate files are automatically cleaned up
-- Modify thread counts in rules according to your computational resources
 - Results are filtered based on FDR and fold change thresholds specified in config.yaml 
