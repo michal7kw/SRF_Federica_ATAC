@@ -52,8 +52,9 @@ samples:
 genome:
   name: "hg38"
   fasta: "data/hg38.fa"
-  bowtie2_index: "/beegfs/scratch/ric.broccoli/kubacki.michal/SRF_H2AK119Ub_cross_V5/SRF_H2AK119Ub/genome/GRCh38"
+  bowtie2_index: "/beegfs/scratch/ric.broccoli/kubacki.michal/SRF_Federica_ATAC/bowtie2_index/hg38"
   blacklist: "data/hg38-blacklist.v2.bed"
+  chrom_sizes: "data/hg38.chrom.sizes"
 
 # Tool parameters
 params:

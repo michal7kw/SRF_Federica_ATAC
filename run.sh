@@ -11,7 +11,7 @@
 #SBATCH --partition=workq
 
 # Set working directory
-WORKING_DIR="/beegfs/scratch/ric.broccoli/kubacki.michal/SRF_Federica"
+WORKING_DIR="/beegfs/scratch/ric.broccoli/kubacki.michal/SRF_Federica_ATAC"
 cd $WORKING_DIR || exit 1
 
 # Create necessary directories
@@ -75,4 +75,5 @@ snakemake \
     --conda-prefix ${WORKING_DIR}/.snakemake/conda \
     --latency-wait 60 \
     --rerun-incomplete \
-    --keep-going
+    --keep-going \
+    --forceall

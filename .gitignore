@@ -1,6 +1,11 @@
 .snakemake/
 logs/
 tmp/
+hg38_reference/
+image/
+bowtie2_index/
+bowtie2_index_prebuild/
+
 
 *.bai
 *.bam
@@ -9,3 +14,5 @@ tmp/
 
 
 *[]._larger_than_50MB
+results/tracks/
+*.bed

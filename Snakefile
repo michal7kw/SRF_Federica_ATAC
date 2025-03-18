@@ -23,6 +23,11 @@ def get_final_output():
     # DiffBind results
     final_output.extend(expand("results/diffbind/{comparison}/differential_peaks.csv", 
                              comparison=[comp["name"] for comp in config["comparisons"]]))
+    # Add MultiQC report to final output
+    final_output.append("results/qc/multiqc/multiqc_report.html")
+    # Add bigWig tracks to final output
+    final_output.extend(expand("results/tracks/{sample}.bw", 
+                             sample=config["samples"]))
     return final_output
 
 # Rules
@@ -120,24 +125,113 @@ rule bowtie2:
         "snakemake"
     shell:
         """
-        # Create temporary directory
+        # Create temporary directory and output directory
         mkdir -p tmp/{wildcards.sample}
+        mkdir -p results/bam
         
-        # Create read group string
-        RG="@RG\\tID:{wildcards.sample}\\tSM:{wildcards.sample}\\tLB:{wildcards.sample}\\tPL:ILLUMINA"
+        # Verify input files exist and are not empty
+        echo "Checking input files..."
+        ls -lh {input.r1} {input.r2}
         
-        # Run bowtie2 with read group information and proper BAM creation
-        bowtie2 -p {threads} -x {params.index} \
-            -1 {input.r1} -2 {input.r2} --rg-id {wildcards.sample} \
-            --rg "SM:{wildcards.sample}" --rg "LB:{wildcards.sample}" --rg "PL:ILLUMINA" 2> tmp/{wildcards.sample}/align.log | \
-            samtools view -bS - | \
-            samtools view -h -b > {output.bam}
-            
-        # Verify the BAM file is valid
+        if [ ! -s {input.r1} ]; then echo "Error: {input.r1} does not exist or is empty" && exit 1; fi
+        if [ ! -s {input.r2} ]; then echo "Error: {input.r2} does not exist or is empty" && exit 1; fi
+        
+        # Check if index exists and list its contents
+        echo "Checking bowtie2 index..."
+        if [ ! -d $(dirname {params.index}) ]; then 
+            echo "Error: Bowtie2 index directory not found at $(dirname {params.index})" && exit 1
+        else
+            echo "Index directory contents:"
+            ls -la $(dirname {params.index})
+        fi
+        
+        # Check for index files specifically
+        echo "Looking for .bt2 files in index directory..."
+        find $(dirname {params.index}) -name "*.bt2" -o -name "*.bt2l"
+        
+        echo "Starting bowtie2 alignment for {wildcards.sample}..."
+        
+        # Step 1: Run bowtie2 to create SAM file with better error handling
+        echo "Running bowtie2 command..."
+        
+        # First check bowtie2 version
+        echo "Bowtie2 version:"
+        bowtie2 --version
+        
+        # Run with more verbose output
+        bowtie2 -p {threads} \
+            -x {params.index} \
+            -1 {input.r1} \
+            -2 {input.r2} \
+            -X 2000 \
+            --very-sensitive \
+            --rg-id "{wildcards.sample}" \
+            --rg "SM:{wildcards.sample}" \
+            --rg "LB:{wildcards.sample}" \
+            --rg "PL:ILLUMINA" \
+            -S tmp/{wildcards.sample}/aligned.sam \
+            --no-unal \
+            --time \
+            2> tmp/{wildcards.sample}/align.log || {{ 
+                echo "Bowtie2 alignment failed. Error log:" 
+                cat tmp/{wildcards.sample}/align.log
+                exit 1
+            }}
+        
+        # Check if SAM file was created successfully
+        if [ ! -s tmp/{wildcards.sample}/aligned.sam ]; then
+            echo "Error: SAM file not created or empty"
+            echo "Bowtie2 log contents:"
+            cat tmp/{wildcards.sample}/align.log
+            exit 1
+        fi
+        
+        # Step 2: Convert SAM to BAM
+        echo "Converting SAM to BAM..."
+        samtools view -@ 4 -bS tmp/{wildcards.sample}/aligned.sam > tmp/{wildcards.sample}/unsorted.bam || {{
+            echo "Error: SAM to BAM conversion failed"
+            exit 1
+        }}
+        
+        # Check if BAM conversion was successful
+        if [ ! -s tmp/{wildcards.sample}/unsorted.bam ]; then
+            echo "Error: BAM conversion failed"
+            exit 1
+        fi
+        
+        # Step 3: Sort BAM file
+        echo "Sorting BAM file..."
+        samtools sort -@ 4 -m 4G -T tmp/{wildcards.sample}/sort \
+            -o {output.bam} tmp/{wildcards.sample}/unsorted.bam || {{
+            echo "Error: BAM sorting failed"
+            exit 1
+        }}
+        
+        # Verify the BAM file was created successfully
+        if [ ! -s {output.bam} ]; then
+            echo "Error: Sorted BAM file not created or empty"
+            exit 1
+        fi
+        
+        # Check the BAM file
+        echo "Validating BAM file..."
         samtools quickcheck {output.bam}
+        if [ $? -ne 0 ]; then
+            echo "Error: BAM file failed validation"
+            samtools view -H {output.bam}
+            exit 1
+        fi
         
-        # Clean up
+        # Index the BAM file to make sure it's valid
+        echo "Indexing BAM file..."
+        samtools index {output.bam}
+        
+        # Clean up temporary files
+        rm -f tmp/{wildcards.sample}/aligned.sam
+        rm -f tmp/{wildcards.sample}/unsorted.bam
         rm -rf tmp/{wildcards.sample}
+        
+        echo "Bowtie2 alignment for {wildcards.sample} completed successfully"
         """
 
 # Sort BAM - I/O intensive, benefits from multiple threads
@@ -235,8 +329,15 @@ rule filter_bam:
         "snakemake"
     shell:
         """
-        samtools view -@ {threads} -b -F 1804 -q 30 {input.bam} | \
+        # For ATAC-seq: 
+        # -F 1804: remove unmapped, mate unmapped, secondary alignments, duplicates
+        # -f 2: keep properly paired reads
+        # -q 30: high quality alignments
+        samtools view -@ {threads} -b -F 1804 -f 2 -q 30 {input.bam} | \
+        # Remove reads in blacklisted regions
         bedtools intersect -v -a stdin -b {input.blacklist} > {output}
+        
+        # Index the filtered BAM
         samtools index -@ {threads} {output}
         """
 
@@ -249,12 +350,16 @@ rule macs2_callpeak:
         xls = "results/peaks/{sample}_peaks.xls",
         summits = "results/peaks/{sample}_summits.bed"
     params:
-        format = config["params"]["macs2"]["format"],
+        format = "BAMPE",  # Paired-end format for ATAC-seq
         genome_size = "hs",
         qvalue = config["params"]["macs2"]["qvalue"],
-        name = "{sample}"
+        name = "{sample}",
+        # ATAC-seq specific parameters
+        shift = "-75",
+        extsize = "150",
+        nomodel = True
     resources:
-        mem_mb=32000,  # Increased memory
+        mem_mb=32000,
         runtime=240
     threads: 4
     conda:
@@ -265,7 +370,7 @@ rule macs2_callpeak:
         mkdir -p results/peaks
         mkdir -p tmp/{wildcards.sample}
         
-        # Run MACS2 with increased buffer size and explicit temp directory
+        # Run MACS2 with ATAC-seq specific parameters
         macs2 callpeak \
             -t {input} \
             -f {params.format} \
@@ -273,8 +378,12 @@ rule macs2_callpeak:
             -n {params.name} \
             --outdir results/peaks \
             -q {params.qvalue} \
+            --shift {params.shift} \
+            --extsize {params.extsize} \
+            --nomodel \
+            --keep-dup all \
             --tempdir tmp/{wildcards.sample} \
-            --buffer-size 1000000 || true  # Continue even if there are non-critical errors
+            --buffer-size 1000000 || true
             
         # Verify output files exist and are not empty
         if [ ! -s {output.peaks} ]; then
@@ -320,4 +429,69 @@ rule diffbind:
     conda:
         "snakemake"
     script:
-        "scripts/run_diffbind.R" 
+        "scripts/run_diffbind.R"
+
+# MultiQC - Aggregate QC reports
+rule multiqc:
+    input:
+        fastqc = expand("results/qc/fastqc/{sample}_{read}_fastqc.zip", 
+                      sample=config["samples"], read=["r1", "r2"]),
+        markdup = expand("results/qc/picard/{sample}.markdup_metrics.txt", 
+                       sample=config["samples"]),
+        # Add other QC files here as needed
+    output:
+        report = "results/qc/multiqc/multiqc_report.html"
+    params:
+        outdir = "results/qc/multiqc"
+    resources:
+        mem_mb=8000,
+        runtime=60
+    threads: 1
+    conda:
+        "snakemake"
+    shell:
+        """
+        # Create output directory
+        mkdir -p {params.outdir}
+        
+        # Run MultiQC
+        multiqc \
+            results/qc/fastqc \
+            results/qc/picard \
+            -o {params.outdir} \
+            -f \
+            -v
+        """
+
+# Generate bigWig files for genome browser visualization
+rule create_bigwig:
+    input:
+        bam = "results/bam/{sample}.filtered.bam",
+        bai = "results/bam/{sample}.filtered.bam.bai"
+    output:
+        bigwig = "results/tracks/{sample}.bw"
+    params:
+        genome_size = config["genome"]["chrom_sizes"],
+        normalize = "RPKM"  # Options: CPM, RPKM, BPM, RPGC, None
+    resources:
+        mem_mb=16000,
+        runtime=240
+    threads: 8
+    conda:
+        "deeptools_env"
+    shell:
+        """
+        # Create output directory
+        mkdir -p results/tracks
+        
+        # Generate normalized bigWig file with ATAC-seq specific parameters
+        # --centerReads centers the signal on the cutting sites
+        bamCoverage -b {input.bam} -o {output.bigwig} \
+            --binSize 10 \
+            --normalizeUsing {params.normalize} \
+            --effectiveGenomeSize $(cat {params.genome_size} | awk '{{sum+=$2}} END {{print sum}}') \
+            --numberOfProcessors {threads} \
+            --ignoreDuplicates \
+            --minMappingQuality 30 \
+            --centerReads
+        """ 

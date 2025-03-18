@@ -1,3 +1,5 @@
+![Samples Overview](samples.png)
+
 # ATAC-seq Analysis Pipeline
 
 This Snakemake pipeline processes ATAC-seq data and performs differential analysis between experimental conditions.
